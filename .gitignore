@@ -1,0 +1,14 @@
+server/data/
+server/.env
+*.db
+*.db-*
+__pycache__/
+.gradle/
+android/build/
+android/app/build/
+android/local.properties
+.idea/
+totales_anonimos_piloto.json
+server/.accesossh*
+*.pem
+*.key

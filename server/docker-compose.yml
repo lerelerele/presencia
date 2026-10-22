@@ -1,0 +1,40 @@
+# Despliegue: Hostinger → Administrador de Docker → Componer desde URL (este archivo),
+# o en el VPS: git clone … && cd presencia/server && docker compose up -d --build
+# Variables (pestaña «Entorno» o archivo .env): BOT_TOKEN, COORD_CHAT_ID, DOMAIN
+x-app: &app
+  build: .
+  environment:
+    TZ: Europe/Madrid
+    DB_PATH: /srv/data/presencia.db
+    PILOT: "1"
+    RETENTION_DAYS: "35"
+    BOT_TOKEN: ${BOT_TOKEN:-}
+    COORD_CHAT_ID: ${COORD_CHAT_ID:-0}
+  volumes:
+    - ./data:/srv/data
+  restart: unless-stopped
+
+services:
+  api:
+    <<: *app
+    container_name: presencia-api
+    command: uvicorn app.api:app --host 0.0.0.0 --port 8080 --proxy-headers --forwarded-allow-ips=*
+
+  bot:
+    <<: *app
+    container_name: presencia-bot
+    # Sin token el bot espera en vez de reiniciarse en bucle.
+    command: sh -c 'if [ -z "$$BOT_TOKEN" ] || [ "$$COORD_CHAT_ID" = 0 ]; then echo "Falta BOT_TOKEN o COORD_CHAT_ID"; exec sleep infinity; fi; exec python -m app.bot'
+
+  caddy:
+    image: caddy:2
+    container_name: presencia-caddy
+    command: caddy reverse-proxy --from ${DOMAIN:-srv2086002.hstgr.cloud} --to api:8080
+    ports: ["80:80", "443:443"]
+    volumes:
+      - caddy-data:/data
+    depends_on: [api]
+    restart: unless-stopped
+
+volumes:
+  caddy-data:
