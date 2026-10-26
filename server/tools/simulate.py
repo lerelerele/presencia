@@ -9,7 +9,7 @@ from datetime import date, datetime, timedelta
 
 from fastapi.testclient import TestClient
 
-from app import api, config, db, reports
+from app import api, config, db, reports, zones
 from app.manage import pilot_metrics
 from app.totals import recompute
 
@@ -27,8 +27,8 @@ def main():
         cur = conn.execute("INSERT INTO agents (name, team, token_hash, min_daily_minutes, min_weekly_minutes, "
                            "informed_on, created_at) VALUES (?,?,?,?,?,?,0)",
                            (name, team, api.token_hash(tok), 240, 1200, (d - timedelta(days=7)).isoformat()))
-        conn.execute("INSERT INTO zones (agent_id, geojson, valid_from, created_at) VALUES (?,?,?,0)",
-                     (cur.lastrowid, json.dumps(ZONE), (d - timedelta(days=7)).isoformat()))
+        zones.create_zone(conn, f"Zona {name}", ZONE, "2000-01-01")
+        zones.assign(conn, cur.lastrowid, f"Zona {name}", (d - timedelta(days=7)).isoformat())
         agents[name] = tok
     conn.commit()
 

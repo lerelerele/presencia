@@ -11,7 +11,7 @@ from typing import Literal
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
-from . import config, db, reports, schedule
+from . import config, db, reports, schedule, zones
 from .totals import totals_range
 
 app = FastAPI(title="Presencia en zona", docs_url=None, redoc_url=None)
@@ -99,7 +99,7 @@ def get_schedule(agent=Depends(get_agent), conn=Depends(get_conn)):
     reason = None
     if not agent["informed_on"]:
         reason = "Pendiente de acuse de recibo: no se registra nada."
-    elif not conn.execute("SELECT 1 FROM zones WHERE agent_id=?", (agent["id"],)).fetchone():
+    elif not zones.has_any_assignment(conn, agent["id"]):
         reason = "Sin zona asignada todavía."
     return {
         "agent": agent["name"],

@@ -13,7 +13,7 @@ from dataclasses import dataclass, asdict
 from datetime import date, datetime, timedelta
 import sqlite3
 
-from . import config, geo, schedule
+from . import config, geo, schedule, zones
 
 
 @dataclass
@@ -40,11 +40,7 @@ class DayTotals:
 
 
 def zones_for_day(conn: sqlite3.Connection, agent_id: int, d: date):
-    row = conn.execute(
-        "SELECT geojson FROM zones WHERE agent_id=? AND valid_from<=? ORDER BY valid_from DESC, id DESC LIMIT 1",
-        (agent_id, d.isoformat()),
-    ).fetchone()
-    return geo.parse_zones(row["geojson"]) if row else None
+    return zones.polygons_for_day(conn, agent_id, d)
 
 
 def classify_day(conn: sqlite3.Connection, agent_id: int, d: date, until_ts: int | None = None) -> DayTotals:

@@ -2,7 +2,12 @@
 
   python -m app.manage alta --nombre "Justo" --equipo "Ángel" --min-dia 3h --min-semana 15h
   python -m app.manage informado 1 --fecha 2026-10-26     ← tras archivar el acuse firmado
-  python -m app.manage zona 1 zonas/justo.geojson --desde 2026-10-26
+  python -m app.manage zona-nueva "Centro" zonas/centro.geojson           ← crea una zona con nombre
+  python -m app.manage zonas-importar zonas/todas.geojson                  ← una zona por polígono (propiedad name)
+  python -m app.manage asignar 1 "Centro" --desde 2026-11-02               ← un comercial puede tener varias
+  python -m app.manage desasignar 1 "Centro" --desde 2026-12-01
+  python -m app.manage traspasar "Centro" --de 1 --a 2 --desde 2026-12-01
+  python -m app.manage zonas                                               ← catálogo y quién tiene cada una
   python -m app.manage festivo 2026-12-08 "Inmaculada Concepción"
   python -m app.manage ausencia 1 2026-11-10 2026-11-12 "Vacaciones"
   python -m app.manage listar
@@ -18,7 +23,7 @@ import sys
 import time
 from datetime import date, timedelta
 
-from . import config, db, geo, schedule
+from . import config, db, geo, schedule, zones
 from .api import token_hash
 from .totals import recompute, totals_range
 
@@ -71,17 +76,115 @@ def cmd_minimos(conn, a):
     print("Mínimos actualizados.")
 
 
+def _desde(v: str | None) -> str:
+    d = v or date.today().isoformat()
+    if d < date.today().isoformat():
+        print("Aviso: fecha pasada. La política exige comunicar los cambios de zona ANTES de aplicarlos; "
+              "se recalculan los días afectados que aún tengan posiciones.", file=sys.stderr)
+    return d
+
+
+def _recalc_from(conn, desde: str, agent_ids: list[int]) -> None:
+    d0, today = date.fromisoformat(desde), date.today()
+    if d0 < today:
+        for aid in agent_ids:
+            recompute(conn, d0, today - timedelta(days=1), aid)
+
+
+def _read(path: str) -> str:
+    with open(path, encoding="utf-8") as f:
+        return f.read()
+
+
+def cmd_zona_nueva(conn, a):
+    desde = a.desde or "2000-01-01"   # la forma vale desde siempre; lo que tiene fecha es la asignación
+    n = zones.create_zone(conn, a.nombre, _read(a.fichero), desde)
+    db.audit(conn, "cli", "zona-nueva", f"zona={a.nombre} poligonos={n}")
+    print(f"Zona «{a.nombre}» creada ({n} polígono(s)). Asígnala con: asignar <id> \"{a.nombre}\" --desde AAAA-MM-DD")
+
+
+def cmd_zonas_importar(conn, a):
+    items = zones.split_features(_read(a.fichero))
+    for name, fc in items:   # se valida todo antes de crear nada
+        if conn.execute("SELECT 1 FROM zone_defs WHERE name=?", (name,)).fetchone():
+            raise zones.ZoneError(f"Ya existe una zona «{name}»; quítala del archivo o usa zona-forma.")
+    for name, fc in items:
+        zones.create_zone(conn, name, fc, "2000-01-01")
+    db.audit(conn, "cli", "zonas-importar", ",".join(n for n, _ in items))
+    print(f"{len(items)} zona(s) creadas: " + ", ".join(f"«{n}»" for n, _ in items))
+
+
+def cmd_zona_forma(conn, a):
+    desde = _desde(a.desde)
+    n = zones.reshape_zone(conn, a.nombre, _read(a.fichero), desde)
+    z = zones.get_zone(conn, a.nombre)
+    afectados = sorted({r["agent_id"] for r in conn.execute(
+        "SELECT agent_id FROM zone_assignments WHERE zone_id=? AND (valid_to IS NULL OR valid_to>?)", (z["id"], desde))})
+    _recalc_from(conn, desde, afectados)
+    db.audit(conn, "cli", "zona-forma", f"zona={a.nombre} desde={desde} poligonos={n}")
+    print(f"Nueva forma de «{a.nombre}» ({n} polígono(s)) vigente desde {desde}. "
+          f"Afecta a: {', '.join(map(str, afectados)) or 'nadie'}.")
+
+
+def cmd_asignar(conn, a):
+    desde = _desde(a.desde)
+    zones.assign(conn, a.id, a.zona, desde, a.hasta)
+    _recalc_from(conn, desde, [a.id])
+    db.audit(conn, "cli", "asignar", f"agent={a.id} zona={a.zona} {desde}..{a.hasta or ''}")
+    actuales = zones.agent_zone_names(conn, a.id, date.fromisoformat(desde))
+    print(f"«{a.zona}» asignada al comercial {a.id} desde {desde}" + (f" hasta {a.hasta}" if a.hasta else "")
+          + f". Zonas ese día: {', '.join(actuales)}.")
+
+
+def cmd_desasignar(conn, a):
+    desde = _desde(a.desde)
+    zones.unassign(conn, a.id, a.zona, desde)
+    _recalc_from(conn, desde, [a.id])
+    db.audit(conn, "cli", "desasignar", f"agent={a.id} zona={a.zona} desde={desde}")
+    resto = zones.agent_zone_names(conn, a.id, date.fromisoformat(desde))
+    print(f"El comercial {a.id} deja «{a.zona}» desde {desde}. Le quedan: {', '.join(resto) or 'NINGUNA (no se medirá)'}.")
+
+
+def cmd_traspasar(conn, a):
+    desde = _desde(a.desde)
+    zones.transfer(conn, a.zona, a.de, a.a, desde)
+    _recalc_from(conn, desde, [a.de, a.a])
+    db.audit(conn, "cli", "traspasar", f"zona={a.zona} {a.de}->{a.a} desde={desde}")
+    print(f"«{a.zona}» pasa del comercial {a.de} al {a.a} desde {desde}.")
+
+
+def cmd_zonas(conn, a):
+    d = date.fromisoformat(a.dia) if a.dia else date.today()
+    rows = conn.execute("SELECT * FROM zone_defs ORDER BY name").fetchall()
+    if not rows:
+        print("No hay zonas. Crea una con zona-nueva o zonas-importar.")
+        return
+    print(f"Zonas el {d.isoformat()}:")
+    for z in rows:
+        h = zones.holders(conn, z["id"], d)
+        g = zones.geometry_on(conn, z["id"], d)
+        print(f"  {z['name']:<28} {len(g) if g else 0} polígono(s)   "
+              f"→ {', '.join(f'{r['name']} ({r['id']})' for r in h) or 'sin asignar'}")
+    print()
+    for r in conn.execute("SELECT id, name FROM agents WHERE active=1 ORDER BY id"):
+        print(f"  {r['id']:>3} {r['name']:<22} {', '.join(zones.agent_zone_names(conn, r['id'], d)) or 'SIN ZONA'}")
+    if a.historial:
+        print("\nHistorial de asignaciones:")
+        for r in conn.execute(
+                "SELECT z.*, d.name zn, ag.name an FROM zone_assignments z JOIN zone_defs d ON d.id=z.zone_id "
+                "JOIN agents ag ON ag.id=z.agent_id ORDER BY d.name, z.valid_from"):
+            print(f"  {r['zn']:<28} {r['an']:<22} {r['valid_from']} → {r['valid_to'] or '…'}")
+
+
 def cmd_zona(conn, a):
-    with open(a.fichero, encoding="utf-8") as f:
-        raw = f.read()
-    polys = geo.parse_zones(raw)
-    desde = a.desde or date.today().isoformat()
-    if desde < date.today().isoformat():
-        print("Aviso: la política exige comunicar el cambio de zona ANTES de aplicarlo.", file=sys.stderr)
-    conn.execute("INSERT INTO zones (agent_id, name, geojson, valid_from, created_at) VALUES (?,?,?,?,?)",
-                 (a.id, a.nombre, json.dumps(json.loads(raw)), desde, int(time.time())))
-    db.audit(conn, "cli", "zona", f"agent={a.id} desde={desde} poligonos={len(polys)}")
-    print(f"Zona cargada ({len(polys)} polígono(s)), vigente desde {desde}.")
+    """Atajo: crea la zona con nombre y la asigna al comercial en un paso."""
+    desde = _desde(a.desde)
+    n = zones.create_zone(conn, a.nombre, _read(a.fichero), "2000-01-01")
+    zones.assign(conn, a.id, a.nombre, desde)
+    _recalc_from(conn, desde, [a.id])
+    db.audit(conn, "cli", "zona", f"agent={a.id} zona={a.nombre} desde={desde} poligonos={n}")
+    print(f"Zona «{a.nombre}» ({n} polígono(s)) creada y asignada al comercial {a.id} desde {desde}. "
+          f"Zonas ese día: {', '.join(zones.agent_zone_names(conn, a.id, date.fromisoformat(desde)))}.")
 
 
 def cmd_festivo(conn, a):
@@ -111,18 +214,21 @@ def cmd_ausencia(conn, a):
 
 
 def cmd_baja(conn, a):
+    desde = a.desde or date.today().isoformat()
     conn.execute("UPDATE agents SET active=0, token_hash=NULL WHERE id=?", (a.id,))
-    db.audit(conn, "cli", "baja", f"agent={a.id}")
+    libres = zones.release_all(conn, a.id, desde)
+    db.audit(conn, "cli", "baja", f"agent={a.id} libera={','.join(libres)}")
     print("Comercial dado de baja; su móvil deja de poder enviar datos.")
+    if libres:
+        print(f"Zonas liberadas desde {desde}: {', '.join(libres)}. Reasígnalas con `asignar`.")
 
 
 def cmd_listar(conn, a):
     for r in conn.execute("SELECT * FROM agents ORDER BY id"):
-        z = conn.execute("SELECT valid_from FROM zones WHERE agent_id=? ORDER BY valid_from DESC LIMIT 1",
-                         (r["id"],)).fetchone()
+        zn = zones.agent_zone_names(conn, r["id"], date.today())
         print(f"{r['id']:>3}  {r['name']:<22} {r['team'] or '':<10} "
               f"{'activo' if r['active'] else 'baja':<7} acuse={r['informed_on'] or 'NO':<10} "
-              f"zona={'desde ' + z['valid_from'] if z else 'NO':<16} "
+              f"zonas={', '.join(zn) if zn else 'NINGUNA'} "
               f"telegram={'sí' if r['telegram_id'] else 'no'} "
               f"mín={r['min_daily_minutes'] or '-'}/{r['min_weekly_minutes'] or '-'} min")
 
@@ -209,9 +315,22 @@ def main(argv=None):
     s.add_argument("--fecha", required=True, type=lambda v: date.fromisoformat(v).isoformat()); s.set_defaults(f=cmd_informado)
     s = sp.add_parser("minimos"); s.add_argument("id", type=int); s.add_argument("--min-dia")
     s.add_argument("--min-semana"); s.set_defaults(f=cmd_minimos)
-    s = sp.add_parser("zona"); s.add_argument("id", type=int); s.add_argument("fichero")
-    s.add_argument("--desde", type=lambda v: date.fromisoformat(v).isoformat()); s.add_argument("--nombre")
+    iso = lambda v: date.fromisoformat(v).isoformat()
+    s = sp.add_parser("zona", help="crear y asignar en un paso"); s.add_argument("id", type=int)
+    s.add_argument("fichero"); s.add_argument("--nombre", required=True); s.add_argument("--desde", type=iso)
     s.set_defaults(f=cmd_zona)
+    s = sp.add_parser("zona-nueva"); s.add_argument("nombre"); s.add_argument("fichero"); s.set_defaults(f=cmd_zona_nueva, desde=None)
+    s = sp.add_parser("zonas-importar"); s.add_argument("fichero"); s.set_defaults(f=cmd_zonas_importar)
+    s = sp.add_parser("zona-forma"); s.add_argument("nombre"); s.add_argument("fichero")
+    s.add_argument("--desde", type=iso); s.set_defaults(f=cmd_zona_forma)
+    s = sp.add_parser("asignar"); s.add_argument("id", type=int); s.add_argument("zona")
+    s.add_argument("--desde", type=iso); s.add_argument("--hasta", type=iso); s.set_defaults(f=cmd_asignar)
+    s = sp.add_parser("desasignar"); s.add_argument("id", type=int); s.add_argument("zona")
+    s.add_argument("--desde", type=iso); s.set_defaults(f=cmd_desasignar)
+    s = sp.add_parser("traspasar"); s.add_argument("zona"); s.add_argument("--de", type=int, required=True)
+    s.add_argument("--a", type=int, required=True); s.add_argument("--desde", type=iso); s.set_defaults(f=cmd_traspasar)
+    s = sp.add_parser("zonas"); s.add_argument("--dia"); s.add_argument("--historial", action="store_true")
+    s.set_defaults(f=cmd_zonas)
     s = sp.add_parser("festivo"); s.add_argument("dia", type=lambda v: date.fromisoformat(v).isoformat())
     s.add_argument("nombre", nargs="?", default=""); s.set_defaults(f=cmd_festivo)
     s = sp.add_parser("festivos"); s.add_argument("fichero"); s.set_defaults(f=cmd_festivos)
@@ -219,7 +338,8 @@ def main(argv=None):
     s.add_argument("desde", type=lambda v: date.fromisoformat(v).isoformat())
     s.add_argument("hasta", type=lambda v: date.fromisoformat(v).isoformat())
     s.add_argument("motivo", nargs="?", default=""); s.set_defaults(f=cmd_ausencia)
-    s = sp.add_parser("baja"); s.add_argument("id", type=int); s.set_defaults(f=cmd_baja)
+    s = sp.add_parser("baja"); s.add_argument("id", type=int); s.add_argument("--desde", type=iso)
+    s.set_defaults(f=cmd_baja)
     s = sp.add_parser("listar"); s.set_defaults(f=cmd_listar)
     s = sp.add_parser("recalcular"); s.add_argument("--desde", required=True); s.add_argument("--hasta", required=True)
     s.set_defaults(f=cmd_recalcular)
@@ -231,7 +351,11 @@ def main(argv=None):
 
     a = p.parse_args(argv)
     with db.session() as conn:
-        a.f(conn, a)
+        try:
+            a.f(conn, a)
+        except (zones.ZoneError, ValueError, FileNotFoundError) as e:
+            conn.rollback()
+            raise SystemExit(f"Error: {e}")
 
 
 if __name__ == "__main__":

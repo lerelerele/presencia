@@ -3,7 +3,7 @@ import sqlite3
 import time
 from contextlib import contextmanager
 
-from . import config
+from . import config, zones
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS agents (
@@ -17,15 +17,6 @@ CREATE TABLE IF NOT EXISTS agents (
     min_weekly_minutes INTEGER,
     informed_on TEXT,          -- fecha del acuse firmado; sin ella no se registra nada
     active INTEGER NOT NULL DEFAULT 1,
-    created_at INTEGER NOT NULL
-);
--- Cada fila es el conjunto completo de zonas (FeatureCollection) vigente desde valid_from.
-CREATE TABLE IF NOT EXISTS zones (
-    id INTEGER PRIMARY KEY,
-    agent_id INTEGER NOT NULL REFERENCES agents(id),
-    name TEXT,
-    geojson TEXT NOT NULL,
-    valid_from TEXT NOT NULL,
     created_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS holidays (day TEXT PRIMARY KEY, name TEXT);
@@ -98,6 +89,8 @@ def connect(path: str | None = None) -> sqlite3.Connection:
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")
     conn.executescript(SCHEMA)
+    zones.ensure_schema(conn)
+    conn.commit()
     return conn
 
 

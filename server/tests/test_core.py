@@ -5,7 +5,7 @@ from datetime import date, datetime, timedelta
 import pytest
 from fastapi.testclient import TestClient
 
-from app import api, config, db, geo, reports, schedule
+from app import api, config, db, geo, reports, schedule, zones
 from app.manage import main as manage_main, purge, pilot_metrics
 from app.totals import classify_day, recompute
 
@@ -28,8 +28,8 @@ def env(tmp_path, monkeypatch):
     token = "tok-justo"
     conn.execute("INSERT INTO agents (id, name, team, token_hash, min_daily_minutes, min_weekly_minutes, informed_on, created_at) "
                  "VALUES (1,'Justo','Ángel',?,180,900,'2026-10-01',0)", (api.token_hash(token),))
-    conn.execute("INSERT INTO zones (agent_id, geojson, valid_from, created_at) VALUES (1,?, '2026-10-01', 0)",
-                 (json.dumps(ZONE),))
+    zones.create_zone(conn, "Centro", ZONE, "2000-01-01")
+    zones.assign(conn, 1, "Centro", "2026-10-01")
     conn.commit()
     yield conn, token, zone_file
     conn.close()
@@ -208,7 +208,7 @@ def test_cli_alta_and_metrics(env, capsys):
     manage_main(["alta", "--nombre", "Sonia", "--equipo", "Ángel", "--min-dia", "2h30m"])
     out = capsys.readouterr().out
     assert "Token del móvil" in out
-    manage_main(["zona", "2", str(zone_file), "--desde", "2099-01-01"])
+    manage_main(["zona", "2", str(zone_file), "--nombre", "Sonia centro", "--desde", "2099-01-01"])
     manage_main(["listar"])
     assert "Sonia" in capsys.readouterr().out
     assert "Fiabilidad" in pilot_metrics(conn, date(2026, 10, 19), date(2026, 10, 24))

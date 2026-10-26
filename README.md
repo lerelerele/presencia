@@ -24,7 +24,7 @@ Móvil de empresa (Android)            VPS                                 Teleg
 | Retención 35 días (punto 8) | Purga nocturna de posiciones. Los totales diarios se conservan. |
 | Transparencia / derecho de acceso (12) | `/mis_datos` y la app muestran sus totales; `/exportar` le entrega en CSV todas sus posiciones guardadas. |
 | Incidencias en 48 h (10) | `/justificar`; coordinación acepta o rechaza con un botón; lo aceptado cuenta como "fuera justificado". Fuera de plazo, el bot lo rechaza. |
-| Cambio de zona comunicado antes (4) | Las zonas tienen fecha de vigencia; avisa si cargas una con fecha pasada. |
+| Zonas asignadas (4) | Catálogo de zonas con nombre; cada comercial tiene una o varias, con fechas de asignación, traspasos y cambios de forma versionados. Avisa si el cambio es con fecha pasada. Ver MANUAL.md §4.3 bis. |
 | Piloto sin efectos disciplinarios | `PILOT=1` marca todos los informes. `manage fin-piloto` borra los datos (opcionalmente guarda totales agregados sin nombres). |
 | Baja / móvil perdido | `manage baja` o `manage token` revocan el token; la app borra sus ventanas al recibir 401 y deja de registrar. |
 
@@ -62,8 +62,8 @@ docker compose exec api python -m app.manage festivo 2026-11-02 "Todos los Santo
 ```bash
 docker compose exec api python -m app.manage alta --nombre "…" --equipo "Ángel" --min-dia 4h --min-semana 20h
 #   → token del móvil (una sola vez) y código /start para Telegram
-docker compose exec api python -m app.manage zona 1 /srv/data/zonas/comercial1.geojson --desde 2026-10-26
-#   dibuja la zona en https://geojson.io (varios polígonos = varias zonas) y guárdala en server/data/zonas/
+docker compose exec api python -m app.manage zonas-importar /srv/data/zonas/barrios.geojson   # un polígono con `name` = una zona
+docker compose exec api python -m app.manage asignar 1 "Centro" --desde 2026-10-26            # repetir para cada zona del comercial
 docker compose exec api python -m app.manage informado 1 --fecha 2026-10-26   # SOLO tras archivar el acuse firmado
 docker compose exec api python -m app.manage listar
 ```

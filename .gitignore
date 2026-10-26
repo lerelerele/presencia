@@ -12,3 +12,8 @@ totales_anonimos_piloto.json
 server/.accesossh*
 *.pem
 *.key
+server/.env*
+!server/.env.example
+*.docx
+*.apk
+android/presencia-apk*
