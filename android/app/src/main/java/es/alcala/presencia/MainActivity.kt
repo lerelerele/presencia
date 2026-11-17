@@ -113,9 +113,10 @@ class MainActivity : Activity() {
                 ui.post { render(); if (r.isFailure) text("Sin conexión: se enviará más tarde.") }
             }
         }
+        val horario = Store.horario(this).ifBlank { "el que figura en tu documento informativo" }
         text(
-            "Solo se toma la posición en tu horario laboral (L-V 10:00-14:00 y 17:00-20:30, " +
-                "S 10:30-14:00), nunca en festivos ni ausencias. Los informes muestran tiempos, no rutas. " +
+            "Solo se toma la posición en tu horario laboral ($horario), nunca en festivos ni ausencias. " +
+                "Los informes muestran tiempos, no rutas. " +
                 "Puedes consultar y descargar tus datos con el bot de Telegram (/mis_datos, /exportar).",
             small = true
         )

@@ -215,6 +215,20 @@ Los cambios se comunican al comercial **antes** de aplicarlos, con una fecha `--
 
 Un comercial **sin ninguna zona** ese día no se mide: su informe dice «Sin zona asignada» y el minuto cuenta como sin datos.
 
+### 4.3 ter Horario propio de un comercial
+Por defecto todos tienen el horario general (L-V 10:00-14:00 y 17:00-20:30; S 10:30-14:00). Si un comercial tiene **otra jornada pactada**, se le asigna la suya con fecha de inicio:
+```bash
+M horario 3 "L-V 11:00-19:00" --desde 2026-11-23
+M horario 3 "L-V 10:00-14:00 17:00-20:30; S 10:30-14:00" --desde …   # varios tramos y días
+M horario 3 --general --desde 2026-12-01                              # vuelve al general
+M listar                                                              # columna horario=
+```
+Formato: días `L M X J V S D` (rangos `L-V` o listas `L,X,V`), tramos `HH:MM-HH:MM`, grupos separados por `;`.
+- Solo se registra en **su** jornada. Fuera de ella, incluidas sus pausas, no se toma ninguna posición.
+- La app muestra el horario de cada comercial (desde la versión 0.2) y avisa si va a cambiar.
+- Los días pasados mantienen el horario que tenían. Si se pone una fecha pasada, se recalculan.
+- **Requisito legal:** el horario tiene que ser su jornada laboral real. Antes de aplicarlo, actualiza su documento informativo («Cuándo funciona») y su acuse con ese horario, y comunícaselo. Nunca se usa para medir pausas o tiempo fuera de jornada, aunque el comercial lo pida.
+
 ### 4.4 Preparar el móvil de empresa
 1. Descarga el APK desde GitHub → Actions → *APK piloto* → **Artifacts → presencia-apk**, y descomprime el zip.
 2. Instálalo. Android pedirá permitir apps de origen desconocido para el navegador o el gestor de archivos.

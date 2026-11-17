@@ -8,6 +8,8 @@
   python -m app.manage desasignar 1 "Centro" --desde 2026-12-01
   python -m app.manage traspasar "Centro" --de 1 --a 2 --desde 2026-12-01
   python -m app.manage zonas                                               ← catálogo y quién tiene cada una
+  python -m app.manage horario 3 "L-V 11:00-19:00" --desde 2026-11-23      ← jornada propia de un comercial
+  python -m app.manage horario 3 --general --desde 2026-12-01              ← vuelve al horario general
   python -m app.manage festivo 2026-12-08 "Inmaculada Concepción"
   python -m app.manage ausencia 1 2026-11-10 2026-11-12 "Vacaciones"
   python -m app.manage listar
@@ -187,6 +189,24 @@ def cmd_zona(conn, a):
           f"Zonas ese día: {', '.join(zones.agent_zone_names(conn, a.id, date.fromisoformat(desde)))}.")
 
 
+def cmd_horario(conn, a):
+    if not conn.execute("SELECT 1 FROM agents WHERE id=?", (a.id,)).fetchone():
+        raise ValueError(f"No existe el comercial {a.id}.")
+    if a.general == bool(a.spec):
+        raise ValueError('Indica un horario entre comillas ("L-V 11:00-19:00") o --general, uno de los dos.')
+    desde = _desde(a.desde)
+    spec = None
+    if a.spec:
+        weekly = schedule.parse_spec(a.spec)
+        spec = schedule.format_weekly(weekly)
+    conn.execute("INSERT INTO agent_schedules (agent_id, valid_from, spec, created_at) VALUES (?,?,?,?)",
+                 (a.id, desde, spec, int(time.time())))
+    _recalc_from(conn, desde, [a.id])
+    db.audit(conn, "cli", "horario", f"agent={a.id} desde={desde} spec={spec or 'general'}")
+    print(f"Comercial {a.id}: desde {desde} su jornada es {spec or 'la general (' + schedule.format_weekly(schedule.GENERAL) + ')'}.")
+    print("Recuerda: el documento informativo y el acuse deben reflejar este horario, comunicado antes de aplicarlo.")
+
+
 def cmd_festivo(conn, a):
     conn.execute("INSERT OR REPLACE INTO holidays (day, name) VALUES (?,?)", (a.dia, a.nombre))
     print(f"Festivo {a.dia} añadido.")
@@ -226,9 +246,11 @@ def cmd_baja(conn, a):
 def cmd_listar(conn, a):
     for r in conn.execute("SELECT * FROM agents ORDER BY id"):
         zn = zones.agent_zone_names(conn, r["id"], date.today())
+        w, gen = schedule.agent_weekly(conn, r["id"], date.today())
         print(f"{r['id']:>3}  {r['name']:<22} {r['team'] or '':<10} "
               f"{'activo' if r['active'] else 'baja':<7} acuse={r['informed_on'] or 'NO':<10} "
               f"zonas={', '.join(zn) if zn else 'NINGUNA'} "
+              f"horario={'general' if gen else schedule.format_weekly(w)} "
               f"telegram={'sí' if r['telegram_id'] else 'no'} "
               f"mín={r['min_daily_minutes'] or '-'}/{r['min_weekly_minutes'] or '-'} min")
 
@@ -329,6 +351,8 @@ def main(argv=None):
     s.add_argument("--desde", type=iso); s.set_defaults(f=cmd_desasignar)
     s = sp.add_parser("traspasar"); s.add_argument("zona"); s.add_argument("--de", type=int, required=True)
     s.add_argument("--a", type=int, required=True); s.add_argument("--desde", type=iso); s.set_defaults(f=cmd_traspasar)
+    s = sp.add_parser("horario"); s.add_argument("id", type=int); s.add_argument("spec", nargs="?")
+    s.add_argument("--general", action="store_true"); s.add_argument("--desde", type=iso); s.set_defaults(f=cmd_horario)
     s = sp.add_parser("zonas"); s.add_argument("--dia"); s.add_argument("--historial", action="store_true")
     s.set_defaults(f=cmd_zonas)
     s = sp.add_parser("festivo"); s.add_argument("dia", type=lambda v: date.fromisoformat(v).isoformat())

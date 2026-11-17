@@ -27,6 +27,7 @@ object Store {
             .putString("agent", json.optString("agent"))
             .putString("notice", if (json.isNull("notice")) "" else json.optString("notice"))
             .putBoolean("pilot", json.optBoolean("pilot", true))
+            .putString("horario", json.optString("horario", ""))
             .putLong("last_sync", System.currentTimeMillis() / 1000)
             .apply()
     }
@@ -38,6 +39,7 @@ object Store {
     }
 
     fun agent(ctx: Context) = sp(ctx).getString("agent", "") ?: ""
+    fun horario(ctx: Context) = sp(ctx).getString("horario", "") ?: ""
     fun notice(ctx: Context) = sp(ctx).getString("notice", "") ?: ""
     fun lastSync(ctx: Context) = sp(ctx).getLong("last_sync", 0)
     fun setLastSample(ctx: Context, ts: Long) = sp(ctx).edit().putLong("last_sample", ts).apply()

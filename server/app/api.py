@@ -6,6 +6,7 @@ GET  /api/v1/me        totales propios (transparencia: hoy, semana, mes)
 """
 import hashlib
 import time
+from datetime import date
 from typing import Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException
@@ -108,7 +109,20 @@ def get_schedule(agent=Depends(get_agent), conn=Depends(get_conn)):
         "windows": [[int(a.timestamp()), int(b.timestamp())] for a, b in wins if b.timestamp() > now],
         "valid_until": int(now + config.SCHEDULE_HORIZON_DAYS * 86400),
         "notice": reason,
+        "horario": _horario_text(conn, agent["id"], today),
     }
+
+
+def _horario_text(conn, agent_id: int, today) -> str:
+    """Horario vigente hoy y, si cambia en los próximos días, desde cuándo."""
+    w, _ = schedule.agent_weekly(conn, agent_id, today)
+    txt = schedule.format_weekly(w)
+    nxt = conn.execute("SELECT valid_from FROM agent_schedules WHERE agent_id=? AND valid_from>? ORDER BY valid_from LIMIT 1",
+                       (agent_id, today.isoformat())).fetchone()
+    if nxt:
+        d = date.fromisoformat(nxt["valid_from"])
+        txt += f" (desde el {d.day}/{d.month}: {schedule.format_weekly(schedule.agent_weekly(conn, agent_id, d)[0])})"
+    return txt
 
 
 @app.get("/api/v1/me")

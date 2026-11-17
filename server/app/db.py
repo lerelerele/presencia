@@ -3,7 +3,7 @@ import sqlite3
 import time
 from contextlib import contextmanager
 
-from . import config, zones
+from . import config, schedule, zones
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS agents (
@@ -89,6 +89,7 @@ def connect(path: str | None = None) -> sqlite3.Connection:
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")
     conn.executescript(SCHEMA)
+    schedule.ensure_schema(conn)
     zones.ensure_schema(conn)
     conn.commit()
     return conn
